@@ -387,5 +387,4 @@ export default function Chat() {
         </form>
       </CardContent>
     </Card>
-  );
-}
+  )};
