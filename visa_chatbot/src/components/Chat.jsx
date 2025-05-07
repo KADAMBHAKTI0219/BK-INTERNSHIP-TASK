@@ -37,7 +37,6 @@ export default function Chat() {
           id: doc.id,
           ...doc.data(),
         }));
-        console.log(questions);
         setPredefinedQuestions(questions);
       },
       (error) => {
@@ -133,51 +132,36 @@ export default function Chat() {
           )
         );
 
-        // Check for predefined answer or reference number request
         const normalizedInput = msg.content.trim().toLowerCase();
         let botMessage;
 
-        if (
-          normalizedInput.includes("reference number") ||
-          normalizedInput.includes("id number") ||
-          normalizedInput.includes("user id") ||
-          normalizedInput.includes("my id")
-        ) {
+        const matchedQuestion = predefinedQuestions.find(
+          (q) => q.question.trim().toLowerCase() === normalizedInput
+        );
+
+        if (matchedQuestion) {
           botMessage = {
             id: `bot-${Date.now()}`,
             role: "assistant",
-            content: `Your reference number (User ID) is: ${auth.currentUser.uid}`,
+            content: matchedQuestion.answer,
             timestamp: new Date(),
           };
         } else {
-          const matchedQuestion = predefinedQuestions.find(
-            (q) => q.question.trim().toLowerCase() === normalizedInput
-          );
-
-          if (matchedQuestion) {
-            botMessage = {
-              id: `bot-${Date.now()}`,
-              role: "assistant",
-              content: matchedQuestion.answer,
-              timestamp: new Date(),
-            };
-          } else {
-            const res = await fetch("/api/gemini", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt: msg.content, chatHistory: messages }),
-            });
-            if (!res.ok) {
-              throw new Error(`Gemini API error: ${res.statusText}`);
-            }
-            const { response } = await res.json();
-            botMessage = {
-              id: `bot-${Date.now()}`,
-              role: "assistant",
-              content: response,
-              timestamp: new Date(),
-            };
+          const res = await fetch("/api/gemini", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: msg.content, chatHistory: messages }),
+          });
+          if (!res.ok) {
+            throw new Error(`Gemini API error: ${res.statusText}`);
           }
+          const { response } = await res.json();
+          botMessage = {
+            id: `bot-${Date.now()}`,
+            role: "assistant",
+            content: response,
+            timestamp: new Date(),
+          };
         }
 
         setMessages((prev) => [...prev, botMessage]);
@@ -227,51 +211,36 @@ export default function Chat() {
         )
       );
 
-      // Check for reference number request or predefined answer
       const normalizedInput = input.trim().toLowerCase();
       let botMessage;
 
-      if (
-        normalizedInput.includes("reference number") ||
-        normalizedInput.includes("id number") ||
-        normalizedInput.includes("user id") ||
-        normalizedInput.includes("my id")
-      ) {
+      const matchedQuestion = predefinedQuestions.find(
+        (q) => q.question.trim().toLowerCase() === normalizedInput
+      );
+
+      if (matchedQuestion) {
         botMessage = {
           id: `bot-${Date.now()}`,
           role: "assistant",
-          content: `Your reference number is: ${auth.currentUser.uid}`,
+          content: matchedQuestion.answer,
           timestamp: new Date(),
         };
       } else {
-        const matchedQuestion = predefinedQuestions.find(
-          (q) => q.question.trim().toLowerCase() === normalizedInput
-        );
-
-        if (matchedQuestion) {
-          botMessage = {
-            id: `bot-${Date.now()}`,
-            role: "assistant",
-            content: matchedQuestion.answer,
-            timestamp: new Date(),
-          };
-        } else {
-          const res = await fetch("/api/gemini", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: input, chatHistory: messages }),
-          });
-          if (!res.ok) {
-            throw new Error(`Gemini API error: ${res.statusText}`);
-          }
-          const { response } = await res.json();
-          botMessage = {
-            id: `bot-${Date.now()}`,
-            role: "assistant",
-            content: response,
-            timestamp: new Date(),
-          };
+        const res = await fetch("/api/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: input, chatHistory: messages }),
+        });
+        if (!res.ok) {
+          throw new Error(`Gemini API error: ${res.statusText}`);
         }
+        const { response } = await res.json();
+        botMessage = {
+          id: `bot-${Date.now()}`,
+          role: "assistant",
+          content: response,
+          timestamp: new Date(),
+        };
       }
 
       setMessages((prev) => [...prev, botMessage]);
@@ -309,7 +278,6 @@ export default function Chat() {
     }
   };
 
-  // Function to clear chats
   const handleClearChats = async () => {
     if (!auth.currentUser) return;
 
@@ -317,11 +285,9 @@ export default function Chat() {
       const messagesRef = collection(db, "users", auth.currentUser.uid, "messages");
       const querySnapshot = await getDocs(messagesRef);
 
-      // Delete each document in the messages collection
       const deletePromises = querySnapshot.docs.map((doc) => deleteDoc(doc.ref));
       await Promise.all(deletePromises);
 
-      // Clear the local messages state
       setMessages([]);
       console.log("Chat history cleared successfully.");
     } catch (err) {
@@ -387,4 +353,5 @@ export default function Chat() {
         </form>
       </CardContent>
     </Card>
-  )};
+  );
+}
