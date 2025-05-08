@@ -196,7 +196,7 @@ export default function Home() {
           >
             Stop Capture
           </button>
-        )} <button>
+        )} : <button>
           
         </button>
       </div>
