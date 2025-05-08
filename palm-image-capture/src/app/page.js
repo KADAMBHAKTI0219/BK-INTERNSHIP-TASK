@@ -323,5 +323,3 @@ export default function Home() {
     </div>
   );
 }
-
-palm detector
