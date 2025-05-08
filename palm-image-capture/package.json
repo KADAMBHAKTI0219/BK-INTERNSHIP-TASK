@@ -12,6 +12,7 @@
     "@mediapipe/hands": "^0.4.1675469240",
     "@tensorflow-models/hand-pose-detection": "^2.0.1",
     "@tensorflow/tfjs": "^4.22.0",
+    "handtrackjs": "^0.0.12",
     "next": "15.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
