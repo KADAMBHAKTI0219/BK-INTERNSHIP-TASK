@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useMemo, useState } from 'react';
 import Head from 'next/head';
+import * as handTrack from 'handtrackjs';
+import Image from 'next/image';
 
 export default function Home() {
   const videoRef = useRef(null);
@@ -9,12 +11,33 @@ export default function Home() {
   const [captureStep, setCaptureStep] = useState(0); // 0: not started, 1: right palm, 2: left palm, 3: thumbs back
   const [instruction, setInstruction] = useState('Click Start to begin capture');
   const [isCapturing, setIsCapturing] = useState(false);
+  const modelRef = useRef(null);
 
   const captureSteps = useMemo(() => [
     { label: 'Right Palm', instruction: 'Show your right palm to the camera' },
     { label: 'Left Palm', instruction: 'Show your left palm to the camera' },
     { label: 'Thumbs Back', instruction: 'Show back of both thumbs to the camera' }
   ], []);
+
+  // Initialize HandTrack.js
+  useEffect(() => {
+    const loadModel = async () => {
+      const modelParams = {
+        flipHorizontal: true,
+        maxNumBoxes: 1,
+        iouThreshold: 0.5,
+        scoreThreshold: 0.6,
+      };
+      modelRef.current = await handTrack.load(modelParams);
+      console.log('HandTrack.js model loaded');
+    };
+    loadModel();
+    return () => {
+      if (modelRef.current) {
+        handTrack.stopVideo(videoRef.current);
+      }
+    };
+  }, []);
 
   // Initialize webcam
   const setupWebcam = async () => {
@@ -27,22 +50,58 @@ export default function Home() {
         }
       });
       if (!stream) {
-        // Fallback to any camera
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // Wait for video metadata to load
         await new Promise(resolve => {
-          videoRef.current.onloadedmetadata = resolve;
+          videoRef.current.onloadedmetadata = () => {
+            // Ensure video has valid dimensions
+            if (videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
+              resolve();
+            } else {
+              throw new Error('Invalid video dimensions');
+            }
+          };
         });
+        // Start hand detection only after video is ready
+        if (modelRef.current) {
+          const detectHands = async () => {
+            if (
+              videoRef.current &&
+              modelRef.current &&
+              isCapturing &&
+              videoRef.current.videoWidth > 0 &&
+              videoRef.current.videoHeight > 0
+            ) {
+              try {
+                const predictions = await modelRef.current.detect(videoRef.current);
+                if (predictions.length === 0) {
+                  setInstruction('No palm detected. Please show your palm.');
+                }
+              } catch (err) {
+                console.error('HandTrack.js detection error:', err);
+              }
+            }
+            requestAnimationFrame(detectHands);
+          };
+          detectHands();
+        }
       }
     } catch (err) {
       console.error('Camera error:', err);
-      setInstruction('Unable to access camera. Please enable permissions or check device compatibility.');
+      if (err.name === 'NotAllowedError') {
+        setInstruction('Camera access denied. Please allow camera permissions in your browser settings.');
+      } else if (err.name === 'NotFoundError') {
+        setInstruction('No camera found. Please ensure a camera is connected.');
+      } else {
+        setInstruction('Camera error: ' + err.message);
+      }
     }
   };
 
-  // Handle page visibility to prevent capture interruptions
+  // Handle page visibility
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && isCapturing) {
@@ -53,6 +112,15 @@ export default function Home() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [isCapturing]);
+
+  // Cleanup webcam on unmount
+  useEffect(() => {
+    return () => {
+      if (videoRef.current?.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   // Handle automatic capture sequence
   useEffect(() => {
@@ -88,7 +156,31 @@ export default function Home() {
     };
   }, [captureStep, isCapturing]);
 
-  const captureImage = () => {
+  // Check image quality (brightness)
+  const checkImageQuality = (canvas) => {
+    const context = canvas.getContext('2d');
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let brightnessSum = 0;
+    for (let i = 0; i < imageData.length; i += 4) {
+      brightnessSum += (imageData[i] + imageData[i + 1] + imageData[i + 2]) / 3;
+    }
+    const avgBrightness = brightnessSum / (imageData.length / 4);
+    return avgBrightness > 50; // Arbitrary threshold
+  };
+
+  // Preprocess image (convert to grayscale)
+  const preprocessImage = (canvas) => {
+    const context = canvas.getContext('2d');
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      data[i] = data[i + 1] = data[i + 2] = avg; // Grayscale
+    }
+    context.putImageData(imageData, 0, 0);
+  };
+
+  const captureImage = async () => {
     if (!videoRef.current || !canvasRef.current || captureStep > 3) return;
 
     const canvas = canvasRef.current;
@@ -97,9 +189,16 @@ export default function Home() {
     const maxHeight = 480;
     const videoWidth = videoRef.current.videoWidth;
     const videoHeight = videoRef.current.videoHeight;
+
+    // Check for valid video dimensions
+    if (videoWidth <= 0 || videoHeight <= 0) {
+      setInstruction('Video stream not ready. Please try again.');
+      return;
+    }
+
     const aspectRatio = videoWidth / videoHeight;
 
-    // Set canvas size with capped dimensions
+    // Set canvas size
     if (videoWidth > maxWidth || videoHeight > maxHeight) {
       canvas.width = maxWidth;
       canvas.height = maxWidth / aspectRatio;
@@ -109,6 +208,30 @@ export default function Home() {
     }
 
     context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+
+    // Check image quality
+    if (!checkImageQuality(canvas)) {
+      setInstruction('Image too dark. Please improve lighting.');
+      return;
+    }
+
+    // Verify palm presence using HandTrack.js
+    if (modelRef.current) {
+      try {
+        const predictions = await modelRef.current.detect(videoRef.current);
+        if (predictions.length === 0) {
+          setInstruction('No palm detected. Please show your palm.');
+          return;
+        }
+      } catch (err) {
+        console.error('HandTrack.js detection error:', err);
+        setInstruction('Error detecting palm. Please try again.');
+        return;
+      }
+    }
+
+    // Preprocess for palm print analysis
+    preprocessImage(canvas);
 
     const newImage = {
       url: canvas.toDataURL('image/jpeg', 0.8),
@@ -146,11 +269,21 @@ export default function Home() {
     }
   };
 
+  const toggleFullScreen = () => {
+    const container = document.querySelector('.min-h-screen');
+    if (!document.fullscreenElement) {
+      container.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 w-full max-w-4xl mx-auto">
       <Head>
         <title>Hand Image Capture</title>
         <meta name="description" content="Capture hand images for authentication" />
+        <script src="https://cdn.jsdelivr.net/npm/handtrackjs@0.1.6/dist/handtrack.min.js" />
         <style>{`
           video {
             transform: translateZ(0);
@@ -196,10 +329,18 @@ export default function Home() {
           >
             Stop Capture
           </button>
-        )} : <button>
-          
+        )}
+        <button
+          onClick={toggleFullScreen}
+          className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded"
+        >
+          Toggle Full Screen
         </button>
       </div>
+
+      <p className="text-sm text-gray-600 mb-4">
+        Your images are processed locally and not stored on our servers.
+      </p>
 
       {capturedImages.length > 0 && (
         <div className="w-full">
@@ -209,7 +350,7 @@ export default function Home() {
               <div key={index} className="bg-white p-2 rounded-lg shadow border-2 border-gray-200 min-h-48 flex flex-col items-center justify-center">
                 {capturedImages[index] ? (
                   <>
-                    <img src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain" />
+                    <Image src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain max-h-40" />
                     <p className="text-center text-sm mt-2">{capturedImages[index].label}</p>
                   </>
                 ) : (
