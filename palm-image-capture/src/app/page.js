@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useMemo, useState } from 'react';
 import Head from 'next/head';
-import * as handTrack from 'handtrackjs';
+import { Hands } from '@mediapipe/hands';
 
 export default function Home() {
   const videoRef = useRef(null);
@@ -10,7 +10,6 @@ export default function Home() {
   const [captureStep, setCaptureStep] = useState(0); // 0: not started, 1: right palm, 2: left palm, 3: thumbs back
   const [instruction, setInstruction] = useState('Click Start to begin capture');
   const [isCapturing, setIsCapturing] = useState(false);
-  const modelRef = useRef(null);
 
   const captureSteps = useMemo(() => [
     { label: 'Right Palm', instruction: 'Show your right palm to the camera' },
@@ -18,23 +17,16 @@ export default function Home() {
     { label: 'Thumbs Back', instruction: 'Show back of both thumbs to the camera' }
   ], []);
 
-  // Initialize HandTrack.js
+  // Initialize MediaPipe Hands for palm detection
+  const handsRef = useRef(null);
   useEffect(() => {
-    const loadModel = async () => {
-      const modelParams = {
-        flipHorizontal: true,
-        maxNumBoxes: 1,
-        iouThreshold: 0.5,
-        scoreThreshold: 0.6,
-      };
-      modelRef.current = await handTrack.load(modelParams);
-      console.log('HandTrack.js model loaded');
-    };
-    loadModel();
+    handsRef.current = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+    });
+    handsRef.current.setOptions({ maxNumHands: 1, modelComplexity: 1 });
+    handsRef.current.initialize();
     return () => {
-      if (modelRef.current) {
-        handTrack.stopVideo(videoRef.current);
-      }
+      handsRef.current.close();
     };
   }, []);
 
@@ -56,19 +48,19 @@ export default function Home() {
         await new Promise(resolve => {
           videoRef.current.onloadedmetadata = resolve;
         });
-        // Start hand detection
-        if (modelRef.current) {
-          const detectHands = async () => {
-            if (videoRef.current && modelRef.current && isCapturing) {
-              const predictions = await modelRef.current.detect(videoRef.current);
-              if (predictions.length === 0) {
-                setInstruction('No palm detected. Please show your palm.');
-              }
-            }
-            requestAnimationFrame(detectHands);
-          };
-          detectHands();
-        }
+        // Start MediaPipe Hands processing
+        handsRef.current.onResults((results) => {
+          if (isCapturing && results.multiHandLandmarks.length === 0) {
+            setInstruction('No palm detected. Please show your palm.');
+          }
+        });
+        const processFrame = async () => {
+          if (videoRef.current && handsRef.current) {
+            await handsRef.current.send({ image: videoRef.current });
+          }
+          requestAnimationFrame(processFrame);
+        };
+        processFrame();
       }
     } catch (err) {
       console.error('Camera error:', err);
@@ -189,17 +181,15 @@ export default function Home() {
       return;
     }
 
-    // Verify palm presence using HandTrack.js
-    if (modelRef.current) {
-      const predictions = await modelRef.current.detect(videoRef.current);
-      if (predictions.length === 0) {
-        setInstruction('No palm detected. Please show your palm.');
-        return;
-      }
-    }
-
     // Preprocess for palm print analysis
     preprocessImage(canvas);
+
+    // Verify palm presence using MediaPipe
+    const results = await handsRef.current.send({ image: videoRef.current });
+    if (!results?.multiHandLandmarks?.length) {
+      setInstruction('No palm detected. Please show your palm.');
+      return;
+    }
 
     const newImage = {
       url: canvas.toDataURL('image/jpeg', 0.8),
@@ -251,7 +241,6 @@ export default function Home() {
       <Head>
         <title>Hand Image Capture</title>
         <meta name="description" content="Capture hand images for authentication" />
-        <script src="https://cdn.jsdelivr.net/npm/handtrackjs@0.1.6/dist/handtrack.min.js" />
         <style>{`
           video {
             transform: translateZ(0);
