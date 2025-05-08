@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useMemo, useState } from 'react';
 import Head from 'next/head';
-import { Hands } from '@mediapipe/hands';
 
 export default function Home() {
   const videoRef = useRef(null);
@@ -17,19 +16,6 @@ export default function Home() {
     { label: 'Thumbs Back', instruction: 'Show back of both thumbs to the camera' }
   ], []);
 
-  // Initialize MediaPipe Hands for palm detection
-  const handsRef = useRef(null);
-  useEffect(() => {
-    handsRef.current = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-    });
-    handsRef.current.setOptions({ maxNumHands: 1, modelComplexity: 1 });
-    handsRef.current.initialize();
-    return () => {
-      handsRef.current.close();
-    };
-  }, []);
-
   // Initialize webcam
   const setupWebcam = async () => {
     try {
@@ -41,6 +27,7 @@ export default function Home() {
         }
       });
       if (!stream) {
+        // Fallback to any camera
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
       if (videoRef.current) {
@@ -48,33 +35,14 @@ export default function Home() {
         await new Promise(resolve => {
           videoRef.current.onloadedmetadata = resolve;
         });
-        // Start MediaPipe Hands processing
-        handsRef.current.onResults((results) => {
-          if (isCapturing && results.multiHandLandmarks.length === 0) {
-            setInstruction('No palm detected. Please show your palm.');
-          }
-        });
-        const processFrame = async () => {
-          if (videoRef.current && handsRef.current) {
-            await handsRef.current.send({ image: videoRef.current });
-          }
-          requestAnimationFrame(processFrame);
-        };
-        processFrame();
       }
     } catch (err) {
       console.error('Camera error:', err);
-      if (err.name === 'NotAllowedError') {
-        setInstruction('Camera access denied. Please allow camera permissions in your browser settings.');
-      } else if (err.name === 'NotFoundError') {
-        setInstruction('No camera found. Please ensure a camera is connected.');
-      } else {
-        setInstruction('Camera error: ' + err.message);
-      }
+      setInstruction('Unable to access camera. Please enable permissions or check device compatibility.');
     }
   };
 
-  // Handle page visibility
+  // Handle page visibility to prevent capture interruptions
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && isCapturing) {
@@ -85,15 +53,6 @@ export default function Home() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [isCapturing]);
-
-  // Cleanup webcam on unmount
-  useEffect(() => {
-    return () => {
-      if (videoRef.current?.srcObject) {
-        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
 
   // Handle automatic capture sequence
   useEffect(() => {
@@ -129,31 +88,7 @@ export default function Home() {
     };
   }, [captureStep, isCapturing]);
 
-  // Check image quality (brightness)
-  const checkImageQuality = (canvas) => {
-    const context = canvas.getContext('2d');
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    let brightnessSum = 0;
-    for (let i = 0; i < imageData.length; i += 4) {
-      brightnessSum += (imageData[i] + imageData[i + 1] + imageData[i + 2]) / 3;
-    }
-    const avgBrightness = brightnessSum / (imageData.length / 4);
-    return avgBrightness > 50; // Arbitrary threshold
-  };
-
-  // Preprocess image (convert to grayscale)
-  const preprocessImage = (canvas) => {
-    const context = canvas.getContext('2d');
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-      const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      data[i] = data[i + 1] = data[i + 2] = avg; // Grayscale
-    }
-    context.putImageData(imageData, 0, 0);
-  };
-
-  const captureImage = async () => {
+  const captureImage = () => {
     if (!videoRef.current || !canvasRef.current || captureStep > 3) return;
 
     const canvas = canvasRef.current;
@@ -164,7 +99,7 @@ export default function Home() {
     const videoHeight = videoRef.current.videoHeight;
     const aspectRatio = videoWidth / videoHeight;
 
-    // Set canvas size
+    // Set canvas size with capped dimensions
     if (videoWidth > maxWidth || videoHeight > maxHeight) {
       canvas.width = maxWidth;
       canvas.height = maxWidth / aspectRatio;
@@ -174,22 +109,6 @@ export default function Home() {
     }
 
     context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-
-    // Check image quality
-    if (!checkImageQuality(canvas)) {
-      setInstruction('Image too dark. Please improve lighting.');
-      return;
-    }
-
-    // Preprocess for palm print analysis
-    preprocessImage(canvas);
-
-    // Verify palm presence using MediaPipe
-    const results = await handsRef.current.send({ image: videoRef.current });
-    if (!results?.multiHandLandmarks?.length) {
-      setInstruction('No palm detected. Please show your palm.');
-      return;
-    }
 
     const newImage = {
       url: canvas.toDataURL('image/jpeg', 0.8),
@@ -224,15 +143,6 @@ export default function Home() {
     setInstruction('Capture stopped');
     if (videoRef.current?.srcObject) {
       videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-    }
-  };
-
-  const toggleFullScreen = () => {
-    const container = document.querySelector('.min-h-screen');
-    if (!document.fullscreenElement) {
-      container.requestFullscreen();
-    } else {
-      document.exitFullscreen();
     }
   };
 
@@ -286,18 +196,10 @@ export default function Home() {
           >
             Stop Capture
           </button>
-        )}
-        <button
-          onClick={toggleFullScreen}
-          className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded"
-        >
-          Toggle Full Screen
+        )} <button>
+          
         </button>
       </div>
-
-      <p className="text-sm text-gray-600 mb-4">
-        Your images are processed locally and not stored on our servers.
-      </p>
 
       {capturedImages.length > 0 && (
         <div className="w-full">
@@ -307,7 +209,7 @@ export default function Home() {
               <div key={index} className="bg-white p-2 rounded-lg shadow border-2 border-gray-200 min-h-48 flex flex-col items-center justify-center">
                 {capturedImages[index] ? (
                   <>
-                    <img src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain max-h-40" />
+                    <img src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain" />
                     <p className="text-center text-sm mt-2">{capturedImages[index].label}</p>
                   </>
                 ) : (
