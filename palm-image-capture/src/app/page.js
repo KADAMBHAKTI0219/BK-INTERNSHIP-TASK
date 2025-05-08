@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useMemo, useState } from 'react';
 import Head from 'next/head';
+import Image from 'next/image';
 
 export default function Home() {
   const videoRef = useRef(null);
@@ -301,7 +302,7 @@ export default function Home() {
               <div key={index} className="bg-white p-2 rounded-lg shadow border-2 border-gray-200 min-h-48 flex flex-col items-center justify-center">
                 {capturedImages[index] ? (
                   <>
-                    <img src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain max-h-36" />
+                    <Image src={capturedImages[index].url} alt={`Captured ${capturedImages[index].label}`} className="object-contain max-h-36" />
                     <p className="text-center text-sm mt-2">{capturedImages[index].label}</p>
                   </>
                 ) : (
@@ -312,7 +313,7 @@ export default function Home() {
           ) : (
             capturedImages.slice(0, 3).map((image, index) => (
               <div key={index} className="bg-white p-2 rounded-lg shadow border-2 border-gray-200 min-h-48 flex flex-col items-center justify-center">
-                <img src={image.url} alt={`Detected ${image.label}`} className="object-contain max-h-36" />
+                <Image src={image.url} alt={`Detected ${image.label}`} className="object-contain max-h-36" />
                 <p className="text-center text-sm mt-2">{image.label}</p>
                 <p className="text-xs text-gray-500">{new Date(image.timestamp).toLocaleTimeString()}</p>
               </div>
