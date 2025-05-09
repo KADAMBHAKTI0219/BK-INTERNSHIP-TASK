@@ -21,15 +21,20 @@ export default function PalmDetector() {
     { name: 'Left Thumb', captured: false },
     { name: 'Right Thumb', captured: false }
   ]);
+  const [facingMode, setFacingMode] = useState('user');
 
-  // Detect mobile device and screen size
+  // Detect mobile device and set camera mode
   useEffect(() => {
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     setIsMobile(isMobileDevice);
     
-    // Handle window resize
+    // Use back camera by default on mobile
+    if (isMobileDevice) {
+      setFacingMode('environment');
+    }
+
     const handleResize = () => {
-      // You can add responsive logic here if needed
+      // Responsive logic if needed
     };
     
     window.addEventListener('resize', handleResize);
@@ -71,7 +76,7 @@ export default function PalmDetector() {
     };
   }, []);
 
-  // Fast palm detection
+  // Palm detection logic
   const detectPalm = async () => {
     if (!isCapturing || requiredGestures.every(g => g.captured)) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -101,8 +106,9 @@ export default function PalmDetector() {
           const landmarks = results.landmarks[i];
           const handedness = results.handedness[i][0].displayName;
           
-          // Correct for mirror effect by flipping the handedness
-          const correctedHandedness = handedness === 'Left' ? 'Right' : 'Left';
+          // For back camera, we don't need to flip the handedness
+          const displayHandedness = facingMode === 'environment' ? handedness : 
+                                   handedness === 'Left' ? 'Right' : 'Left';
           
           // Palm detection (front facing)
           const wrist = landmarks[0];
@@ -115,9 +121,9 @@ export default function PalmDetector() {
           const isThumbBack = thumbTip.z < thumbIP.z;
 
           if (isPalmFacing) {
-            currentGesture = `${correctedHandedness} Palm`;
+            currentGesture = `${displayHandedness} Palm`;
           } else if (isThumbBack) {
-            currentGesture = `${correctedHandedness} Thumb`;
+            currentGesture = `${displayHandedness} Thumb`;
           }
 
           // Draw only key landmarks for performance
@@ -132,7 +138,7 @@ export default function PalmDetector() {
               0,
               2 * Math.PI
             );
-            ctx.fillStyle = correctedHandedness === 'Left' ? 'blue' : 'red';
+            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red';
             ctx.fill();
           }
         }
@@ -187,6 +193,11 @@ export default function PalmDetector() {
     return () => clearInterval(interval);
   }, [lastCaptureTime, detectedGesture, isCapturing, requiredGestures]);
 
+  // Toggle camera (front/back)
+  const toggleCamera = () => {
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  };
+
   return (
     <div className="flex flex-col items-center p-4 bg-gray-100 min-h-screen">
       <h1 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6 text-gray-800 text-center">
@@ -203,18 +214,27 @@ export default function PalmDetector() {
               screenshotFormat="image/jpeg"
               className="absolute top-0 left-0 w-full h-full object-cover"
               videoConstraints={{
-                facingMode: isMobile ? { exact: 'environment' } : 'user',
+                facingMode: facingMode,
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
                 frameRate: { ideal: 30 }
               }}
-              mirrored={true}
+              mirrored={facingMode === 'user'} // Only mirror for front camera
             />
             <canvas
               ref={canvasRef}
               className="absolute top-0 left-0 w-full h-full"
             />
           </div>
+
+          {isMobile && (
+            <button 
+              onClick={toggleCamera}
+              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+            >
+              Switch to {facingMode === 'user' ? 'Back' : 'Front'} Camera
+            </button>
+          )}
         </div>
 
         {/* Controls and Info Section */}
