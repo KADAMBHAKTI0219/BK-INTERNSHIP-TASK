@@ -13,7 +13,6 @@ export default function PalmDetector() {
   const [lastCaptureTime, setLastCaptureTime] = useState(0);
   const [timer, setTimer] = useState(5);
   const [isMobile, setIsMobile] = useState(false);
-  const [usingFrontCamera, setUsingFrontCamera] = useState(false);
   const handLandmarkerRef = useRef(null);
   const animationFrameRef = useRef(null);
   const [requiredGestures, setRequiredGestures] = useState([
@@ -22,12 +21,24 @@ export default function PalmDetector() {
     { name: 'Left Thumb', captured: false },
     { name: 'Right Thumb', captured: false }
   ]);
+  const [facingMode, setFacingMode] = useState('user');
 
-  // Detect mobile device
+  // Detect mobile device and set camera mode
   useEffect(() => {
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     setIsMobile(isMobileDevice);
-    setUsingFrontCamera(!isMobileDevice); // Default to front camera on desktop, back on mobile
+    
+    // Use back camera by default on mobile
+    if (isMobileDevice) {
+      setFacingMode('environment');
+    }
+
+    const handleResize = () => {
+      // Responsive logic if needed
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   // Initialize MediaPipe Hand Landmarker
@@ -65,7 +76,7 @@ export default function PalmDetector() {
     };
   }, []);
 
-  // Fast palm detection
+  // Palm detection logic
   const detectPalm = async () => {
     if (!isCapturing || requiredGestures.every(g => g.captured)) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -93,12 +104,11 @@ export default function PalmDetector() {
       if (results.landmarks.length > 0) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
-          let handedness = results.handedness[i][0].displayName;
+          const handedness = results.handedness[i][0].displayName;
           
-          // Only flip handedness if using front camera
-          if (usingFrontCamera) {
-            handedness = handedness === 'Left' ? 'Right' : 'Left';
-          }
+          // For back camera, we don't need to flip the handedness
+          const displayHandedness = facingMode === 'environment' ? handedness : 
+                                   handedness === 'Left' ? 'Right' : 'Left';
           
           // Palm detection (front facing)
           const wrist = landmarks[0];
@@ -111,9 +121,9 @@ export default function PalmDetector() {
           const isThumbBack = thumbTip.z < thumbIP.z;
 
           if (isPalmFacing) {
-            currentGesture = `${handedness} Palm`;
+            currentGesture = `${displayHandedness} Palm`;
           } else if (isThumbBack) {
-            currentGesture = `${handedness} Thumb`;
+            currentGesture = `${displayHandedness} Thumb`;
           }
 
           // Draw only key landmarks for performance
@@ -128,7 +138,7 @@ export default function PalmDetector() {
               0,
               2 * Math.PI
             );
-            ctx.fillStyle = handedness === 'Left' ? 'blue' : 'red';
+            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red';
             ctx.fill();
           }
         }
@@ -164,11 +174,6 @@ export default function PalmDetector() {
     }
   };
 
-  // Toggle between front and back camera
-  const toggleCamera = () => {
-    setUsingFrontCamera(prev => !prev);
-  };
-
   // Timer effect
   useEffect(() => {
     if (!isCapturing) return;
@@ -188,92 +193,119 @@ export default function PalmDetector() {
     return () => clearInterval(interval);
   }, [lastCaptureTime, detectedGesture, isCapturing, requiredGestures]);
 
+  // Toggle camera (front/back)
+  const toggleCamera = () => {
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  };
+
   return (
     <div className="flex flex-col items-center p-4 bg-gray-100 min-h-screen">
-      <h1 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6 text-gray-800">Palmistry Capture</h1>
+      <h1 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6 text-gray-800 text-center">
+        Palmistry Capture
+      </h1>
       
-      <div className="relative w-full max-w-md mb-4 md:mb-8">
-        <div className="aspect-w-4 aspect-h-3">
-          <Webcam
-            audio={false}
-            ref={webcamRef}
-            screenshotFormat="image/jpeg"
-            className="rounded-lg shadow-lg w-full h-auto"
-            videoConstraints={{
-              facingMode: usingFrontCamera ? 'user' : { exact: 'environment' },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
-            }}
-            mirrored={false} // No mirroring - we handle handedness manually
-          />
-          <canvas
-            ref={canvasRef}
-            className="absolute top-0 left-0 w-full h-full"
-          />
+      <div className="w-full max-w-4xl mx-auto flex flex-col lg:flex-row gap-6">
+        {/* Camera and Canvas Section */}
+        <div className="flex-1">
+          <div className="relative aspect-video bg-black rounded-lg overflow-hidden shadow-xl">
+            <Webcam
+              audio={false}
+              ref={webcamRef}
+              screenshotFormat="image/jpeg"
+              className="absolute top-0 left-0 w-full h-full object-cover"
+              videoConstraints={{
+                facingMode: facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 30 }
+              }}
+              mirrored={facingMode === 'user'} // Only mirror for front camera
+            />
+            <canvas
+              ref={canvasRef}
+              className="absolute top-0 left-0 w-full h-full"
+            />
+          </div>
+
+          {isMobile && (
+            <button 
+              onClick={toggleCamera}
+              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+            >
+              Switch to {facingMode === 'user' ? 'Back' : 'Front'} Camera
+            </button>
+          )}
         </div>
-        {isMobile && (
-          <button
-            onClick={toggleCamera}
-            className="absolute bottom-2 right-2 bg-white p-2 rounded-full shadow-md"
-          >
-            {usingFrontCamera ? 'Switch to Back' : 'Switch to Front'}
-          </button>
-        )}
-      </div>
-      
-      <div className="w-full max-w-md space-y-4">
-        {detectedGesture && (
-          <p className="text-green-600 font-semibold text-center">
-            {detectedGesture} Detected!
-          </p>
-        )}
-        
-        {isCapturing ? (
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p className="text-center font-medium mb-2">
-              Next capture in: {timer} seconds
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {requiredGestures.map((gesture, index) => (
-                <div 
-                  key={index} 
-                  className={`p-2 rounded text-center ${
-                    gesture.captured 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-gray-100 text-gray-800'
-                  }`}
-                >
-                  {gesture.name}
+
+        {/* Controls and Info Section */}
+        <div className="flex-1 max-w-md lg:max-w-none">
+          <div className="bg-white rounded-xl shadow-md p-4 md:p-6">
+            {detectedGesture && (
+              <p className="text-lg font-semibold text-center mb-4 text-green-600">
+                {detectedGesture} Detected!
+              </p>
+            )}
+            
+            {isCapturing ? (
+              <>
+                <div className="text-center mb-4">
+                  <p className="text-sm text-gray-500">Next capture in</p>
+                  <p className="text-3xl font-bold text-blue-600">{timer}s</p>
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded text-center">
-            All required captures completed!
-          </div>
-        )}
-        
-        {capturedImages.length > 0 && (
-          <div className="mt-4">
-            <h2 className="text-xl font-semibold mb-2">Captured Images</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {capturedImages.map((image, index) => (
-                <div key={index} className="bg-white p-2 rounded shadow">
-                  <img
-                    src={image.url}
-                    alt={image.type}
-                    className="rounded w-full h-auto border border-gray-200"
-                  />
-                  <p className="text-xs mt-1 text-center">
-                    {image.type} - {image.timestamp}
-                  </p>
+                
+                <div className="mb-6">
+                  <h2 className="text-lg font-semibold mb-3 text-center">Required Gestures</h2>
+                  <div className="grid grid-cols-2 gap-3">
+                    {requiredGestures.map((gesture, index) => (
+                      <div 
+                        key={index} 
+                        className={`p-3 rounded-lg text-center transition-all ${
+                          gesture.captured 
+                            ? 'bg-green-100 text-green-800 border border-green-200' 
+                            : 'bg-gray-50 text-gray-700 border border-gray-200'
+                        }`}
+                      >
+                        <span className="block text-sm font-medium">{gesture.name}</span>
+                        <span className="block text-xs mt-1">
+                          {gesture.captured ? '✓ Captured' : 'Pending'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-center">
+                <p className="font-bold">All required captures completed!</p>
+                <p className="text-sm mt-1">You can review your captured images below</p>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Captured Images Section */}
+          {capturedImages.length > 0 && (
+            <div className="mt-6 bg-white rounded-xl shadow-md p-4 md:p-6">
+              <h2 className="text-lg font-semibold mb-4">Captured Images</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {capturedImages.map((image, index) => (
+                  <div key={index} className="group relative">
+                    <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                      <img
+                        src={image.url}
+                        alt={image.type}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <p className="text-xs truncate">{image.type}</p>
+                      <p className="text-xxs">{image.timestamp}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
