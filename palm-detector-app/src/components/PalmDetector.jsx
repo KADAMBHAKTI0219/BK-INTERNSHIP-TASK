@@ -5,13 +5,14 @@ import Webcam from 'react-webcam';
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 export default function PalmDetector() {
-  const webcamRef = useRef(null);
+ const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const [capturedImages, setCapturedImages] = useState([]);
   const [detectedGesture, setDetectedGesture] = useState(null);
   const [isCapturing, setIsCapturing] = useState(true);
   const [lastCaptureTime, setLastCaptureTime] = useState(0);
   const [timer, setTimer] = useState(5);
+  const [isMobile, setIsMobile] = useState(false);
   const handLandmarkerRef = useRef(null);
   const animationFrameRef = useRef(null);
   const [requiredGestures, setRequiredGestures] = useState([
@@ -19,6 +20,12 @@ export default function PalmDetector() {
     { name: 'Right Palm', captured: false },
     { name: 'Back Thumb', captured: false }
   ]);
+
+  // Detect mobile device
+  useEffect(() => {
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsMobile(isMobileDevice);
+  }, []);
 
   // Initialize MediaPipe Hand Landmarker
   useEffect(() => {
@@ -50,6 +57,7 @@ export default function PalmDetector() {
       }
     };
   }, []);
+
 
   // Update timer every second
   useEffect(() => {
@@ -242,6 +250,12 @@ export default function PalmDetector() {
           width={640}
           height={480}
           className="rounded-lg shadow-lg"
+          videoConstraints={{
+            facingMode: isMobile ? { exact: 'environment' } : 'user',
+            width: 640,
+            height: 480,
+            frameRate: { ideal: 30 }
+          }}
         />
         <canvas
           ref={canvasRef}
