@@ -29,7 +29,9 @@ export default function PalmDetector() {
 
   // Detect mobile device
   useEffect(() => {
-    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
     setIsMobile(isMobileDevice);
     if (isMobileDevice) {
       setFacingMode('environment');
@@ -42,7 +44,7 @@ export default function PalmDetector() {
   // Initialize Hand Landmarker
   useEffect(() => {
     let isMounted = true;
-    
+
     async function initializeHandLandmarker() {
       try {
         const vision = await FilesetResolver.forVisionTasks(
@@ -50,13 +52,14 @@ export default function PalmDetector() {
         );
         const landmarker = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
             delegate: 'GPU',
           },
           runningMode: 'VIDEO',
           numHands: 2,
         });
-        
+
         if (isMounted) {
           handLandmarkerRef.current = landmarker;
           detectPalm();
@@ -65,9 +68,9 @@ export default function PalmDetector() {
         console.error('Error initializing HandLandmarker:', error);
       }
     }
-    
+
     initializeHandLandmarker();
-    
+
     return () => {
       isMounted = false;
       cancelAnimationFrame(animationFrameRef.current);
@@ -76,7 +79,7 @@ export default function PalmDetector() {
 
   // Check if all gestures are captured
   useEffect(() => {
-    const allCaptured = requiredGestures.every(g => g.captured);
+    const allCaptured = requiredGestures.every((g) => g.captured);
     if (allCaptured && isCapturing) {
       setIsCapturing(false);
     }
@@ -84,48 +87,48 @@ export default function PalmDetector() {
 
   // Palm detection logic
   const detectPalm = async () => {
-    if (!isCapturing || requiredGestures.every(g => g.captured)) {
+    if (!isCapturing || requiredGestures.every((g) => g.captured)) {
       cancelAnimationFrame(animationFrameRef.current);
       return;
     }
-    
+
     animationFrameRef.current = requestAnimationFrame(detectPalm);
     const video = webcamRef.current?.video;
-    
+
     if (!video || video.readyState !== 4 || !handLandmarkerRef.current) return;
-    
+
     try {
       const results = await handLandmarkerRef.current.detectForVideo(video, Date.now());
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
-      
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       let currentGesture = null;
-      
+
       if (results.landmarks.length > 0) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
           const handedness = results.handedness[i][0].displayName;
-          const displayHandedness = facingMode === 'environment' ? handedness : 
-                                    handedness === 'Left' ? 'Right' : 'Left';
-          
+          const displayHandedness =
+            facingMode === 'environment' ? handedness : handedness === 'Left' ? 'Right' : 'Left';
+
           const wrist = landmarks[0];
           const middleFingerMCP = landmarks[9];
           const isPalmFacing = wrist.z < middleFingerMCP.z;
-          
+
           const thumbTip = landmarks[4];
           const thumbIP = landmarks[2];
           const isThumbBack = thumbTip.z < thumbIP.z;
-          
+
           if (isPalmFacing) {
             currentGesture = `${displayHandedness} Palm`;
           } else if (isThumbBack) {
             currentGesture = `${displayHandedness} Thumb`;
           }
-          
+
           // Draw hand landmarks
           const keyPoints = [0, 4, 8, 12, 16, 20];
           for (const index of keyPoints) {
@@ -137,7 +140,7 @@ export default function PalmDetector() {
           }
         }
       }
-      
+
       setDetectedGesture(currentGesture);
     } catch (error) {
       console.error('Detection error:', error);
@@ -146,24 +149,30 @@ export default function PalmDetector() {
 
   // Capture image
   const captureImage = async (gestureType) => {
-    if (!webcamRef.current) return;
-    
+    if (!webcamRef.current) {
+      console.error('Webcam not available');
+      return;
+    }
+
     const imageSrc = webcamRef.current.getScreenshot();
-    if (!imageSrc) return;
-    
-    setCapturedImages(prev => [
+    if (!imageSrc) {
+      console.error('Failed to capture screenshot');
+      return;
+    }
+
+    setCapturedImages((prev) => [
       ...prev,
       {
         type: gestureType,
         url: imageSrc,
         timestamp: new Date().toLocaleTimeString(),
-      }
+      },
     ]);
-    
-    setRequiredGestures(prev =>
-      prev.map(g => g.name === gestureType ? { ...g, captured: true } : g)
+
+    setRequiredGestures((prev) =>
+      prev.map((g) => (g.name === gestureType ? { ...g, captured: true } : g))
     );
-    
+
     setLastCaptureTime(Date.now());
     setTimer(5);
   };
@@ -171,64 +180,128 @@ export default function PalmDetector() {
   // Timer effect
   useEffect(() => {
     if (!isCapturing) return;
-    
+
     const interval = setInterval(() => {
       const timeRemaining = Math.max(0, 5 - (Date.now() - lastCaptureTime) / 1000);
       setTimer(Math.ceil(timeRemaining));
-      
+
       if (timeRemaining <= 0 && detectedGesture) {
-        const nextGesture = requiredGestures.find(g => !g.captured);
+        const nextGesture = requiredGestures.find((g) => !g.captured);
         if (nextGesture && detectedGesture.includes(nextGesture.name.split(' ')[0])) {
           captureImage(nextGesture.name);
         }
       }
     }, 1000);
-    
+
     return () => clearInterval(interval);
   }, [lastCaptureTime, detectedGesture, isCapturing, requiredGestures]);
 
   // Convert data URL to blob
   const dataURLtoBlob = (dataURL) => {
-    const arr = dataURL.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
+    try {
+      const arr = dataURL.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+
+      return new Blob([u8arr], { type: mime });
+    } catch (error) {
+      console.error('Error converting data URL to blob:', error);
+      throw error;
     }
-    
-    return new Blob([u8arr], { type: mime });
+  };
+
+  // Reset capture process
+  const resetCapture = () => {
+    setCapturedImages([]);
+    setRequiredGestures([
+      { name: 'Left Palm', captured: false },
+      { name: 'Right Palm', captured: false },
+      { name: 'Left Thumb', captured: false },
+      { name: 'Right Thumb', captured: false },
+    ]);
+    setIsCapturing(true);
+    setLastCaptureTime(0);
+    setTimer(5);
+    setPrediction(null);
+    setShowPrediction(false);
+    setApiError(null);
   };
 
   // Analyze palmistry
   const analyzePalmistry = async () => {
     setIsLoading(true);
     setApiError(null);
-    
+
     try {
+      if (capturedImages.length !== 4) {
+        throw new Error('Please capture all four required images');
+      }
+
+      console.log('Captured images:', capturedImages.map((img) => img.type));
+
       const formData = new FormData();
       capturedImages.forEach((image, index) => {
-        const blob = dataURLtoBlob(image.url);
-        formData.append(`image_${index}`, blob, `${image.type.replace(' ', '_')}.jpg`);
+        try {
+          const blob = dataURLtoBlob(image.url);
+          console.log(`Image ${image.type} blob size: ${blob.size}`);
+          if (blob.size === 0) {
+            throw new Error(`Invalid image data for ${image.type}`);
+          }
+          formData.append(`image_${index}`, blob, `${image.type.replace(' ', '_')}.jpg`);
+        } catch (error) {
+          throw new Error(`Failed to process ${image.type}: ${error.message}`);
+        }
       });
-      
+
+      console.log('Sending request to /api/palmistry');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
       const response = await fetch('/api/palmistry', {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
-      
+
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API error: ${response.status}`);
       }
-      
+
       const result = await response.json();
+      console.log('API response:', result);
+
+      if (
+        !result ||
+        !result.overall ||
+        !result.leftpalm ||
+        !result.rightpalm ||
+        !result.leftthumb ||
+        !result.rightthumb
+      ) {
+        throw new Error('Incomplete data received from API');
+      }
+
       setPrediction(result);
       setShowPrediction(true);
     } catch (error) {
       console.error('Error analyzing palmistry:', error);
-      setApiError('Failed to get prediction. Please try again.');
+      setApiError(error.message || 'Failed to get prediction. Please try again.');
+
+      if (error.message.includes('timeout') || error.message.includes('network')) {
+        console.log('Retrying in 2 seconds...');
+        setTimeout(() => {
+          analyzePalmistry();
+        }, 2000);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -236,7 +309,7 @@ export default function PalmDetector() {
 
   // Toggle camera
   const toggleCamera = () => {
-    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+    setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
   };
 
   // Show prediction handler
@@ -253,7 +326,7 @@ export default function PalmDetector() {
       <h1 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6 text-gray-800 text-center">
         Palmistry Capture
       </h1>
-      
+
       <div className="w-full max-w-4xl mx-auto flex flex-col lg:flex-row gap-6">
         {/* Camera Section */}
         <div className="flex-1">
@@ -272,17 +345,14 @@ export default function PalmDetector() {
                 }}
                 mirrored={facingMode === 'user'}
               />
-              <canvas
-                ref={canvasRef}
-                className="absolute top-0 left-0 w-full h-full"
-              />
+              <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
             </div>
           ) : (
             <div className="relative aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-xl flex items-center justify-center">
               <p className="text-xl font-medium text-gray-600">Capture Complete</p>
             </div>
           )}
-          
+
           {isMobile && isCapturing && (
             <button
               onClick={toggleCamera}
@@ -292,7 +362,7 @@ export default function PalmDetector() {
             </button>
           )}
         </div>
-        
+
         {/* Controls Section */}
         <div className="flex-1 max-w-md lg:max-w-none">
           {isCapturing ? (
@@ -302,12 +372,12 @@ export default function PalmDetector() {
                   {detectedGesture} Detected!
                 </p>
               )}
-              
+
               <div className="text-center mb-4">
                 <p className="text-sm text-gray-500">Next capture in</p>
                 <p className="text-3xl font-bold text-blue-600">{timer}s</p>
               </div>
-              
+
               <div className="mb-6">
                 <h2 className="text-lg font-semibold mb-3 text-center">Required Gestures</h2>
                 <div className="grid grid-cols-2 gap-3">
@@ -335,7 +405,14 @@ export default function PalmDetector() {
                 <p className="font-bold">All required captures completed!</p>
                 <p className="text-sm mt-1">Click below to view your palmistry reading.</p>
               </div>
-              
+
+              <button
+                onClick={resetCapture}
+                className="w-full px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
+              >
+                Reset Capture
+              </button>
+
               {!showPrediction && (
                 <button
                   onClick={handleShowPrediction}
@@ -345,14 +422,14 @@ export default function PalmDetector() {
                   {isLoading ? 'Analyzing...' : 'View Palmistry Reading'}
                 </button>
               )}
-              
+
               {isLoading && (
                 <div className="flex flex-col items-center justify-center p-8 bg-white rounded-xl shadow-md">
                   <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
                   <p className="text-gray-600">Analyzing your palmistry...</p>
                 </div>
               )}
-              
+
               {apiError && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
                   <p>{apiError}</p>
@@ -364,7 +441,7 @@ export default function PalmDetector() {
                   </button>
                 </div>
               )}
-              
+
               {showPrediction && prediction && (
                 <div className="bg-white rounded-xl shadow-md p-4 md:p-6">
                   <div className="flex justify-between items-center mb-4">
@@ -376,32 +453,32 @@ export default function PalmDetector() {
                       Hide Reading
                     </button>
                   </div>
-                  
+
                   <div className="space-y-4">
                     <div className="p-4 bg-blue-50 rounded-lg">
                       <h3 className="font-medium text-blue-800 mb-2">Overall Reading</h3>
                       <p className="text-gray-700">{prediction.overall}</p>
                     </div>
-                    
+
                     <div className="space-y-4">
                       <div className="p-4 bg-green-50 rounded-lg">
                         <h3 className="font-medium text-green-800 mb-2">Left Palm</h3>
-                        <p className="text-gray-700">{prediction.leftPalm}</p>
+                        <p className="text-gray-700">{prediction.leftpalm}</p>
                       </div>
-                      
+
                       <div className="p-4 bg-green-50 rounded-lg">
                         <h3 className="font-medium text-green-800 mb-2">Right Palm</h3>
-                        <p className="text-gray-700">{prediction.rightPalm}</p>
+                        <p className="text-gray-700">{prediction.rightpalm}</p>
                       </div>
-                      
+
                       <div className="p-4 bg-purple-50 rounded-lg">
                         <h3 className="font-medium text-purple-800 mb-2">Left Thumb</h3>
-                        <p className="text-gray-700">{prediction.leftThumb}</p>
+                        <p className="text-gray-700">{prediction.leftthumb}</p>
                       </div>
-                      
+
                       <div className="p-4 bg-purple-50 rounded-lg">
                         <h3 className="font-medium text-purple-800 mb-2">Right Thumb</h3>
-                        <p className="text-gray-700">{prediction.rightThumb}</p>
+                        <p className="text-gray-700">{prediction.rightthumb}</p>
                       </div>
                     </div>
                   </div>
@@ -409,7 +486,7 @@ export default function PalmDetector() {
               )}
             </div>
           )}
-          
+
           {/* Captured Images Section */}
           {capturedImages.length > 0 && (
             <div className="mt-6 bg-white rounded-xl shadow-md p-4 md:p-6">
