@@ -17,7 +17,7 @@ export async function POST(request) {
     if (!process.env.GEMINI_API_KEY) {
       console.error('GEMINI_API_KEY is not set');
       return NextResponse.json(
-        { error: 'Server configuration error: Missing API key' },
+        { error: 'Server configuration error: Missing \nMissing API key' },
         { status: 500 }
       );
     }

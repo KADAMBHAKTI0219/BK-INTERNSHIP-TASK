@@ -147,16 +147,82 @@ export default function PalmDetector() {
     }
   };
 
+  // Check image clarity (basic blur detection using variance of Laplacian)
+  const checkImageClarity = (imageSrc) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = imageSrc;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        // Convert to grayscale and compute Laplacian variance
+        let sum = 0;
+        let sumSquared = 0;
+        let pixelCount = 0;
+
+        for (let y = 1; y < canvas.height - 1; y++) {
+          for (let x = 1; x < canvas.width - 1; x++) {
+            const i = (y * canvas.width + x) * 4;
+            // Convert to grayscale
+            const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+
+            // Laplacian filter
+            const laplacian =
+              -4 * gray +
+              (data[((y - 1) * canvas.width + x) * 4] * 0.299 +
+                data[((y - 1) * canvas.width + x) * 4 + 1] * 0.587 +
+                data[((y - 1) * canvas.width + x) * 4 + 2] * 0.114) +
+              (data[((y + 1) * canvas.width + x) * 4] * 0.299 +
+                data[((y + 1) * canvas.width + x) * 4 + 1] * 0.587 +
+                data[((y + 1) * canvas.width + x) * 4 + 2] * 0.114) +
+              (data[(y * canvas.width + (x - 1)) * 4] * 0.299 +
+                data[(y * canvas.width + (x - 1)) * 4 + 1] * 0.587 +
+                data[(y * canvas.width + (x - 1)) * 4 + 2] * 0.114) +
+              (data[(y * canvas.width + (x + 1)) * 4] * 0.299 +
+                data[(y * canvas.width + (x + 1)) * 4 + 1] * 0.587 +
+                data[(y * canvas.width + (x + 1)) * 4 + 2] * 0.114);
+
+            sum += laplacian;
+            sumSquared += laplacian * laplacian;
+            pixelCount++;
+          }
+        }
+
+        const mean = sum / pixelCount;
+        const variance = sumSquared / pixelCount - mean * mean;
+        // Threshold for blur detection (adjust based on testing)
+        resolve(variance > 100); // Higher variance indicates sharper image
+      };
+      img.onerror = () => resolve(false);
+    });
+  };
+
   // Capture image
   const captureImage = async (gestureType) => {
     if (!webcamRef.current) {
       console.error('Webcam not available');
+      setApiError('Webcam not available');
       return;
     }
 
     const imageSrc = webcamRef.current.getScreenshot();
     if (!imageSrc) {
       console.error('Failed to capture screenshot');
+      setApiError('Failed to capture screenshot');
+      return;
+    }
+
+    // Check image clarity
+    const isClear = await checkImageClarity(imageSrc);
+    if (!isClear) {
+      setApiError(`Image for ${gestureType} is too blurry. Please try again with better lighting and a steady hand.`);
       return;
     }
 
@@ -246,7 +312,7 @@ export default function PalmDetector() {
       console.log('Captured images:', capturedImages.map((img) => img.type));
 
       const formData = new FormData();
-      capturedImages.forEach((image, index) => {
+      for (const [index, image] of capturedImages.entries()) {
         try {
           const blob = dataURLtoBlob(image.url);
           console.log(`Image ${image.type} blob size: ${blob.size}`);
@@ -257,7 +323,7 @@ export default function PalmDetector() {
         } catch (error) {
           throw new Error(`Failed to process ${image.type}: ${error.message}`);
         }
-      });
+      }
 
       console.log('Sending request to /api/palmistry');
       const controller = new AbortController();
@@ -336,12 +402,13 @@ export default function PalmDetector() {
                 audio={false}
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
+                screenshotQuality={0.95}
                 className="absolute top-0 left-0 w-full h-full object-cover"
                 videoConstraints={{
                   facingMode,
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                  frameRate: { ideal: 30 },
+                  width: { min: 640, ideal: 1280, max: 1920 },
+                  height: { min: 480, ideal: 720, max: 1080 },
+                  frameRate: { ideal: 30, min: 15 },
                 }}
                 mirrored={facingMode === 'user'}
               />
@@ -350,6 +417,14 @@ export default function PalmDetector() {
           ) : (
             <div className="relative aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-xl flex items-center justify-center">
               <p className="text-xl font-medium text-gray-600">Capture Complete</p>
+            </div>
+          )}
+
+          {isCapturing && (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 px-4 py-3 rounded-lg mt-4">
+              <p className="text-sm">
+                Ensure bright, even lighting and hold your hand steady for clear images.
+              </p>
             </div>
           )}
 
