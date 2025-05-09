@@ -26,7 +26,6 @@ export default function PalmDetector() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPrediction, setShowPrediction] = useState(false);
   const [apiError, setApiError] = useState(null);
-  const [blurWarnings, setBlurWarnings] = useState({}); // Track blurry images
 
   // Detect mobile device
   useEffect(() => {
@@ -67,7 +66,6 @@ export default function PalmDetector() {
         }
       } catch (error) {
         console.error('Error initializing HandLandmarker:', error);
-        setApiError('Failed to initialize hand detection. Please refresh.');
       }
     }
 
@@ -149,75 +147,25 @@ export default function PalmDetector() {
     }
   };
 
-  // Client-side blur detection
-  const isImageBlurry = (imageSrc) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = imageSrc;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        let edgeSum = 0;
-        let count = 0;
-
-        for (let y = 1; y < canvas.height - 1; y++) {
-          for (let x = 1; x < canvas.width - 1; x++) {
-            const idx = (y * canvas.width + x) * 4;
-            const gray = (imageData[idx] + imageData[idx + 1] + imageData[idx + 2]) / 3;
-            const neighbors = [
-              ((y - 1) * canvas.width + x) * 4,
-              ((y + 1) * canvas.width + x) * 4,
-              (y * canvas.width + x - 1) * 4,
-              (y * canvas.width + x + 1) * 4,
-            ].map((n) => (imageData[n] + imageData[n + 1] + imageData[n + 2]) / 3);
-            const edge = Math.abs(
-              4 * gray - neighbors[0] - neighbors[1] - neighbors[2] - neighbors[3]
-            );
-            edgeSum += edge;
-            count++;
-          }
-        }
-
-        const edgeAverage = edgeSum / count;
-        resolve(edgeAverage < 20); // Adjust threshold as needed
-      };
-      img.onerror = () => resolve(true); // Assume blurry if loading fails
-    });
-  };
-
-  // Capture image with blur check
+  // Capture image
   const captureImage = async (gestureType) => {
     if (!webcamRef.current) {
       console.error('Webcam not available');
-      setApiError('Webcam not available. Please check permissions.');
       return;
     }
 
     const imageSrc = webcamRef.current.getScreenshot();
     if (!imageSrc) {
       console.error('Failed to capture screenshot');
-      setApiError('Failed to capture image. Please try again.');
       return;
     }
 
-    const isBlurry = await isImageBlurry(imageSrc);
-    setBlurWarnings((prev) => ({
-      ...prev,
-      [gestureType]: isBlurry ? 'Image may be blurry. Consider re-capturing.' : null,
-    }));
-
     setCapturedImages((prev) => [
-      ...prev.filter((img) => img.type !== gestureType), // Replace existing image
+      ...prev,
       {
         type: gestureType,
         url: imageSrc,
         timestamp: new Date().toLocaleTimeString(),
-        isBlurry,
       },
     ]);
 
@@ -227,16 +175,6 @@ export default function PalmDetector() {
 
     setLastCaptureTime(Date.now());
     setTimer(5);
-  };
-
-  // Re-capture specific gesture
-  const recaptureImage = (gestureType) => {
-    setRequiredGestures((prev) =>
-      prev.map((g) => (g.name === gestureType ? { ...g, captured: false } : g))
-    );
-    setCapturedImages((prev) => prev.filter((img) => img.type !== gestureType));
-    setBlurWarnings((prev) => ({ ...prev, [gestureType]: null }));
-    setIsCapturing(true);
   };
 
   // Timer effect
@@ -274,7 +212,7 @@ export default function PalmDetector() {
       return new Blob([u8arr], { type: mime });
     } catch (error) {
       console.error('Error converting data URL to blob:', error);
-      throw new Error('Invalid image data');
+      throw error;
     }
   };
 
@@ -293,7 +231,6 @@ export default function PalmDetector() {
     setPrediction(null);
     setShowPrediction(false);
     setApiError(null);
-    setBlurWarnings({});
   };
 
   // Analyze palmistry
@@ -306,7 +243,7 @@ export default function PalmDetector() {
         throw new Error('Please capture all four required images');
       }
 
-      console.log('Captured images:', capturedImages.map((img) => ({ type: img.type, blurry: img.isBlurry })));
+      console.log('Captured images:', capturedImages.map((img) => img.type));
 
       const formData = new FormData();
       capturedImages.forEach((image, index) => {
@@ -342,21 +279,18 @@ export default function PalmDetector() {
       const result = await response.json();
       console.log('API response:', result);
 
-      // Validate response, allow partial success
-      if (!result) {
-        throw new Error('No data received from API');
+      if (
+        !result ||
+        !result.overall ||
+        !result.leftpalm ||
+        !result.rightpalm ||
+        !result.leftthumb ||
+        !result.rightthumb
+      ) {
+        throw new Error('Incomplete data received from API');
       }
 
-      // Set default values for missing fields
-      const validatedResult = {
-        overall: result.overall || 'Overall reading unavailable.',
-        leftpalm: result.leftpalm || 'Left palm analysis unavailable.',
-        rightpalm: result.rightpalm || 'Right palm analysis unavailable.',
-        leftthumb: result.leftthumb || 'Left thumb analysis unavailable.',
-        rightthumb: result.rightthumb || 'Right thumb analysis unavailable.',
-      };
-
-      setPrediction(validatedResult);
+      setPrediction(result);
       setShowPrediction(true);
     } catch (error) {
       console.error('Error analyzing palmistry:', error);
@@ -460,11 +394,6 @@ export default function PalmDetector() {
                       <span className="block text-xs mt-1">
                         {gesture.captured ? '✓ Captured' : 'Pending'}
                       </span>
-                      {blurWarnings[gesture.name] && (
-                        <span className="block text-xs text-red-600 mt-1">
-                          {blurWarnings[gesture.name]}
-                        </span>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -574,16 +503,7 @@ export default function PalmDetector() {
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white p-2">
                       <p className="text-xs truncate">{image.type}</p>
-                      {image.isBlurry && (
-                        <p className="text-xs text-yellow-300">Blurry</p>
-                      )}
                     </div>
-                    <button
-                      onClick={() => recaptureImage(image.type)}
-                      className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition"
-                    >
-                      Re-capture
-                    </button>
                   </div>
                 ))}
               </div>
