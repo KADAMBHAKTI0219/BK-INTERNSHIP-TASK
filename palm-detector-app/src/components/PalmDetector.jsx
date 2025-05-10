@@ -12,7 +12,6 @@ export default function PalmDetector() {
   const [lastCaptureTime, setLastCaptureTime] = useState(0);
   const [timer, setTimer] = useState(5);
   const [isMobile, setIsMobile] = useState(false);
-  const [webcamReady, setWebcamReady] = useState(false);
   const handLandmarkerRef = useRef(null);
   const animationFrameRef = useRef(null);
   const [requiredGestures, setRequiredGestures] = useState([
@@ -26,9 +25,8 @@ export default function PalmDetector() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPrediction, setShowPrediction] = useState(false);
   const [apiError, setApiError] = useState(null);
-  const [gestureHistory, setGestureHistory] = useState([]);
-  const [bypassStabilityCheck, setBypassStabilityCheck] = useState(false);
 
+  // Resize image to prevent oversized blobs
   const resizeImage = (dataURL, maxSize = 800) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -53,8 +51,10 @@ export default function PalmDetector() {
     });
   };
 
+  // Convert data URL to blob with proper error handling
   const dataURLtoBlob = (dataURL) => {
     try {
+      console.log('Data URL (first 50 chars):', dataURL.substring(0, 50));
       const arr = dataURL.split(',');
       const mime = arr[0].match(/:(.*?);/)[1];
       const bstr = atob(arr[1]);
@@ -62,7 +62,7 @@ export default function PalmDetector() {
       for (let i = 0; i < bstr.length; i++) {
         u8arr[i] = bstr.charCodeAt(i);
       }
-      const blob = new Blob([u8arr], { type: mime });
+      const blob = new Blob([u8arr], { type: 'image/jpeg' });
       console.log('Blob size:', blob.size, 'Type:', blob.type);
       return blob;
     } catch (error) {
@@ -71,27 +71,14 @@ export default function PalmDetector() {
     }
   };
 
+  // Enhanced image capture with proper blob creation
   const captureImage = async (gestureType) => {
     if (!webcamRef.current || webcamRef.current.video.readyState !== 4) {
-      setApiError('Webcam not ready. Please ensure camera access is allowed.');
+      setApiError('Webcam not ready');
       return;
     }
 
     try {
-      if (!bypassStabilityCheck) {
-        const recentGestures = gestureHistory.slice(-30);
-        const gestureCount = recentGestures.filter((g) => g === gestureType).length;
-        console.log(
-          `Stability check for ${gestureType}: ${gestureCount}/${recentGestures.length} gestures match`,
-          recentGestures
-        );
-        if (recentGestures.length > 15 && gestureCount / recentGestures.length < 0.5) {
-          throw new Error(`Unstable ${gestureType} detection. Please hold steady.`);
-        }
-      } else {
-        console.log(`Bypassing stability check for ${gestureType}`);
-      }
-
       const imageSrc = webcamRef.current.getScreenshot({
         width: 1280,
         height: 720,
@@ -102,8 +89,13 @@ export default function PalmDetector() {
         throw new Error('Empty or invalid screenshot captured');
       }
 
+      // Resize image to ensure manageable size
       const resizedImageSrc = await resizeImage(imageSrc);
       const blob = await dataURLtoBlob(resizedImageSrc);
+
+      if (blob.size < 500) {
+        throw new Error('Image data is too small');
+      }
 
       setCapturedImages((prev) => [
         ...prev,
@@ -128,6 +120,7 @@ export default function PalmDetector() {
     }
   };
 
+  // Detect mobile device
   useEffect(() => {
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent
@@ -141,6 +134,7 @@ export default function PalmDetector() {
     };
   }, []);
 
+  // Initialize Hand Landmarker
   useEffect(() => {
     let isMounted = true;
 
@@ -165,7 +159,7 @@ export default function PalmDetector() {
         }
       } catch (error) {
         console.error('Error initializing HandLandmarker:', error);
-        setApiError('Failed to initialize hand detection. Please refresh the page.');
+        setApiError('Failed to initialize hand detection');
       }
     }
 
@@ -177,6 +171,7 @@ export default function PalmDetector() {
     };
   }, []);
 
+  // Check if all gestures are captured
   useEffect(() => {
     const allCaptured = requiredGestures.every((g) => g.captured);
     if (allCaptured && isCapturing) {
@@ -184,6 +179,7 @@ export default function PalmDetector() {
     }
   }, [requiredGestures, isCapturing]);
 
+  // Palm detection logic
   const detectPalm = async () => {
     if (!isCapturing || requiredGestures.every((g) => g.captured)) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -209,13 +205,14 @@ export default function PalmDetector() {
       if (results.landmarks.length > 0) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
-          const handedness = results.handedness[i][0].displayName;
+          const handedness = results.handedness[i][0].displayName; // Raw handedness (Left or Right)
+          // Adjust handedness for gesture labeling and dot colors based on facingMode
           const displayHandedness =
             facingMode === 'environment' ? handedness : handedness === 'Left' ? 'Right' : 'Left';
 
           const wrist = landmarks[0];
           const middleFingerMCP = landmarks[9];
-          const isPalmFacing = wrist.z < middleFingerMCP.z + 0.05;
+          const isPalmFacing = wrist.z < middleFingerMCP.z;
 
           const thumbTip = landmarks[4];
           const thumbIP = landmarks[2];
@@ -227,30 +224,26 @@ export default function PalmDetector() {
             currentGesture = `${displayHandedness} Thumb`;
           }
 
+          // Draw hand landmarks using displayHandedness for dot colors
           const keyPoints = [0, 4, 8, 12, 16, 20];
           for (const index of keyPoints) {
             const landmark = landmarks[index];
             ctx.beginPath();
             ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red';
+            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red'; // Use displayHandedness for dot color
             ctx.fill();
           }
         }
       }
 
-      console.log(
-        `Detected gesture: ${currentGesture}, Landmarks count: ${results.landmarks.length}, Wrist Z: ${
-          results.landmarks[0]?.[0]?.z || 'N/A'
-        }, Middle MCP Z: ${results.landmarks[0]?.[9]?.z || 'N/A'}`
-      );
       setDetectedGesture(currentGesture);
-      setGestureHistory((prev) => [...prev, currentGesture].slice(-30));
     } catch (error) {
       console.error('Detection error:', error);
-      setApiError('Hand detection failed. Please try again.');
+      setApiError('Hand detection failed');
     }
   };
 
+  // Timer effect
   useEffect(() => {
     if (!isCapturing) return;
 
@@ -269,6 +262,7 @@ export default function PalmDetector() {
     return () => clearInterval(interval);
   }, [lastCaptureTime, detectedGesture, isCapturing, requiredGestures]);
 
+  // Reset capture process
   const resetCapture = () => {
     setCapturedImages([]);
     setRequiredGestures([
@@ -283,101 +277,74 @@ export default function PalmDetector() {
     setPrediction(null);
     setShowPrediction(false);
     setApiError(null);
-    setGestureHistory([]);
-    setBypassStabilityCheck(false);
   };
 
+  // Analyze palmistry with proper FormData handling
   const analyzePalmistry = async () => {
     setIsLoading(true);
     setApiError(null);
 
-    const maxRetries = 3;
-    let attempt = 1;
-
-    while (attempt <= maxRetries) {
-      try {
-        if (capturedImages.length !== 4) {
-          throw new Error('Please capture all four required images');
-        }
-
-        const formData = new FormData();
-        capturedImages.forEach((image) => {
-          if (!image.blob) {
-            throw new Error(`Missing image data for ${image.type}`);
-          }
-          const key = image.type.replace(' ', '_').toLowerCase();
-          console.log('Appending to FormData:', key, 'Size:', image.blob.size);
-          formData.append(key, image.blob, `${key}.jpg`);
-        });
-
-        const response = await fetch('/api/palmistry', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          if (response.status === 429 && attempt < maxRetries) {
-            const retryDelay = 1000 * Math.pow(2, attempt);
-            console.log(`Retry ${attempt}/${maxRetries} after ${retryDelay}ms due to 429 error`);
-            await new Promise((resolve) => setTimeout(resolve, retryDelay));
-            attempt++;
-            continue;
-          }
-          throw new Error(errorData.error || `API request failed: ${response.status}`);
-        }
-
-        const result = await response.json();
-        if (!result.data) {
-          throw new Error('Invalid response format from server');
-        }
-
-        setPrediction({
-          overall: result.data.overallReading || 'No overall reading available',
-          leftpalm: result.data.leftPalm || 'Left palm analysis not available',
-          rightpalm: result.data.rightPalm || 'Right palm analysis not available',
-          leftthumb: result.data.leftThumb || 'Left thumb analysis not available',
-          rightthumb: result.data.rightThumb || 'Right thumb analysis not available',
-        });
-
-        setShowPrediction(true);
-        break;
-      } catch (error) {
-        console.error(`Analysis attempt ${attempt} error:`, error);
-        if (attempt === maxRetries) {
-          setApiError(error.message || 'Failed to analyze. Please try again.');
-        }
+    try {
+      if (capturedImages.length !== 4) {
+        throw new Error('Please capture all four required images');
       }
-      attempt++;
-    }
 
-    setIsLoading(false);
+      const formData = new FormData();
+      capturedImages.forEach((image) => {
+        if (!image.blob) {
+          throw new Error(`Missing image data for ${image.type}`);
+        }
+        const key = image.type.replace(' ', '_').toLowerCase();
+        console.log('Appending to FormData:', key, 'Size:', image.blob.size);
+        formData.append(key, image.blob, `${key}.jpg`);
+      });
+
+      const response = await fetch('/api/palmistry', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'API request failed');
+      }
+
+      const result = await response.json();
+      if (!result.data) {
+        throw new Error('Invalid response format from server');
+      }
+
+      setPrediction({
+        overall: result.data.overallReading || 'No overall reading available',
+        leftpalm: result.data.leftPalm || 'Left palm analysis not available',
+        rightpalm: result.data.rightPalm || 'Right palm analysis not available',
+        leftthumb: result.data.leftThumb || 'Left thumb analysis not available',
+        rightthumb: result.data.rightThumb || 'Right thumb analysis not available',
+      });
+
+      setShowPrediction(true);
+    } catch (error) {
+      console.error('Analysis error:', error);
+      setApiError(error.message || 'Failed to analyze. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
+  // Toggle camera with delay
   const toggleCamera = () => {
     setFacingMode((prev) => {
       const newMode = prev === 'user' ? 'environment' : 'user';
-      console.log('Camera switched to:', newMode);
+      setTimeout(() => {
+        if (webcamRef.current) {
+          console.log('Camera switched to:', newMode);
+        }
+      }, 500);
       return newMode;
     });
   };
 
-  const toggleStabilityCheck = () => {
-    setBypassStabilityCheck((prev) => !prev);
-    console.log('Stability check bypass:', !bypassStabilityCheck);
-  };
-
-  const handleWebcamUserMedia = () => {
-    setWebcamReady(true);
-    setApiError(null);
-  };
-
-  const handleWebcamUserMediaError = (error) => {
-    console.error('Webcam access error:', error);
-    setApiError('Please allow webcam access to continue.');
-    setWebcamReady(false);
-  };
-
+  // Show prediction handler
   const handleShowPrediction = () => {
     if (!prediction) {
       analyzePalmistry();
@@ -393,6 +360,7 @@ export default function PalmDetector() {
       </h1>
 
       <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-6">
+        {/* Camera Section */}
         <div className="flex-1">
           {isCapturing ? (
             <div className="relative aspect-video bg-black rounded-lg overflow-hidden shadow-xl">
@@ -409,8 +377,6 @@ export default function PalmDetector() {
                   frameRate: { ideal: 30 },
                 }}
                 mirrored={facingMode === 'user'}
-                onUserMedia={handleWebcamUserMedia}
-                onUserMediaError={handleWebcamUserMediaError}
               />
               <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
             </div>
@@ -423,40 +389,22 @@ export default function PalmDetector() {
           {isCapturing && (
             <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 px-4 py-3 rounded-lg mt-4">
               <p className="text-sm">
-                Hold your palm flat, 30-50 cm from the camera, in bright, even lighting. Keep steady for 5 seconds.
-                {facingMode === 'user' && (
-                  <span> Note: Your left hand appears as right in selfie mode.</span>
-                )}
-                {gestureHistory.length > 15 &&
-                  gestureHistory.slice(-30).filter((g) => g === detectedGesture).length /
-                    gestureHistory.slice(-30).length <
-                    0.5 && (
-                    <span> Detection unstable. Try adjusting lighting or hand position.</span>
-                  )}
+                Ensure bright, even lighting and hold your hand steady for clear images.
               </p>
             </div>
           )}
 
-          {isCapturing && (
-            <div className="flex gap-4 mt-4">
-              {isMobile && (
-                <button
-                  onClick={toggleCamera}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
-                >
-                  Switch to {facingMode === 'user' ? 'Back' : 'Front'} Camera
-                </button>
-              )}
-              <button
-                onClick={toggleStabilityCheck}
-                className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
-              >
-                {bypassStabilityCheck ? 'Enable' : 'Bypass'} Stability Check
-              </button>
-            </div>
+          {isMobile && isCapturing && (
+            <button
+              onClick={toggleCamera}
+              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+            >
+              Switch to {facingMode === 'user' ? 'Back' : 'Front'} Camera
+            </button>
           )}
         </div>
 
+        {/* Controls Section */}
         <div className="flex-1 max-w-md lg:max-w-none">
           {isCapturing ? (
             <div className="bg-white rounded-xl shadow-md p-4 md:p-6">
@@ -580,6 +528,7 @@ export default function PalmDetector() {
             </div>
           )}
 
+          {/* Captured Images Section */}
           {capturedImages.length > 0 && (
             <div className="mt-6 bg-white rounded-xl shadow-md p-4 md:p-6">
               <h2 className="text-lg font-semibold mb-4">Captured Images</h2>

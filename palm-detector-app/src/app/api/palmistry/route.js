@@ -53,11 +53,11 @@ export async function POST(request) {
         maxOutputTokens: 2000,
         temperature: 0.7,
       },
-      systemInstruction: `You are a professional palm reader. Analyze hand images and provide:
+      systemInstruction: `You are a professional palm reader. Analyze hand images and provide structured responses with sections. For individual hand parts (except right palm), include:
       1. Clear descriptions of visible features
       2. Practical interpretations
       3. Any limitations due to image quality
-      4. Structured responses with sections`,
+      For the right palm, only describe the visible lines (e.g., "Visible lines: Deep head line, forked heart line").`,
     });
 
     // Process images with retry logic
@@ -74,10 +74,16 @@ export async function POST(request) {
           `Processing ${key}: Buffer size=${buffer.byteLength}, MIME=${file.type}, Base64 length=${base64Image.length}`
         );
 
-        const prompt = `Analyze this ${key.replace(/([A-Z])/g, ' $1')} image for palmistry features:
-        - Describe all visible lines and marks
-        - Provide traditional interpretations
-        - Note any unclear areas`;
+        // Special prompt for rightPalm to only describe visible lines
+        const prompt =
+          key === 'rightPalm'
+            ? `Analyze this Right Palm image for palmistry features:
+            - Describe only the visible lines (e.g., "Visible lines: Deep head line, forked heart line")
+            - Do not provide interpretations or limitations`
+            : `Analyze this ${key.replace(/([A-Z])/g, ' $1')} image for palmistry features:
+            - Describe all visible lines and marks
+            - Provide traditional interpretations
+            - Note any unclear areas`;
 
         const result = await retryWithBackoff(async () => {
           console.log(`Sending Gemini API request for ${key}`);
@@ -103,32 +109,36 @@ export async function POST(request) {
       }
     }
 
-    // Generate overall reading
+    // Generate overall reading only if all individual analyses succeeded
     try {
-      const overallPrompt = `Create a comprehensive palm reading:
-      Left Palm: ${results.leftPalm}
-      Right Palm: ${results.rightPalm}
-      Left Thumb: ${results.leftThumb}
-      Right Thumb: ${results.rightThumb}
-      
-      Structure your response with:
-      1. Personality Insights
-      2. Life Path Suggestions
-      3. Relationship Patterns
-      4. Health Indicators`;
+      if (successfulAnalyses === requiredKeys.length) {
+        const overallPrompt = `Create a comprehensive palm reading based on the following analyses:
+        Left Palm: ${results.leftPalm}
+        Right Palm: ${results.rightPalm}
+        Left Thumb: ${results.leftThumb}
+        Right Thumb: ${results.rightThumb}
+        
+        Structure your response with:
+        1. Personality Insights
+        2. Life Path Suggestions
+        3. Relationship Patterns
+        4. Health Indicators`;
 
-      results.overall = await retryWithBackoff(async () => {
-        console.log('Sending Gemini API request for overall reading');
-        const response = await model.generateContent([{ text: overallPrompt }]);
-        const text = (await response.response).text();
-        console.log(`Received Gemini API response for overall: ${text.substring(0, 100)}...`);
-        return text;
-      });
+        results.overall = await retryWithBackoff(async () => {
+          console.log('Sending Gemini API request for overall reading');
+          const response = await model.generateContent([{ text: overallPrompt }]);
+          const text = (await response.response).text();
+          console.log(`Received Gemini API response for overall: ${text.substring(0, 100)}...`);
+          return text;
+        });
 
-      successfulAnalyses++;
+        successfulAnalyses++;
+      } else {
+        results.overall = 'Overall reading not generated due to incomplete analysis of individual parts.';
+      }
     } catch (error) {
       console.error('Error generating overall analysis:', error.message);
-      results.overall = `Could not generate complete reading: ${error.message}`;
+      results.overall = `Could not generate overall reading: ${error.message}`;
     }
 
     // Return partial results if at least one analysis succeeded
