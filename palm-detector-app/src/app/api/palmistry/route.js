@@ -1,11 +1,29 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+// Utility function for delay
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Utility function for retry with exponential backoff
+const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error.message.includes('429') && attempt < maxRetries) {
+        const retryDelay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`Retry ${attempt}/${maxRetries} after ${retryDelay}ms due to 429 error`);
+        await delay(retryDelay);
+        continue;
+      }
+      throw error;
+    }
+  }
+};
 
 export async function POST(request) {
   try {
-    // Verify API key is available
+    // Verify API key
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('Missing Gemini API key in server configuration');
     }
@@ -27,9 +45,10 @@ export async function POST(request) {
       console.log(`File ${key}: Size=${file.size}, Type=${file.type}`);
     }
 
-    // Initialize model with better configuration
+    // Initialize model
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-pro',
+      model: 'gemini-1.5-flash',
       generationConfig: {
         maxOutputTokens: 2000,
         temperature: 0.7,
@@ -41,36 +60,46 @@ export async function POST(request) {
       4. Structured responses with sections`,
     });
 
-    // Process images and get analysis
+    // Process images with retry logic
     const results = {};
+    const requiredKeys = ['leftPalm', 'rightPalm', 'leftThumb', 'rightThumb'];
+    let successfulAnalyses = 0;
 
-    for (const [key, file] of Object.entries(images)) {
+    for (const key of requiredKeys) {
       try {
+        const file = images[key];
         const buffer = await file.arrayBuffer();
         const base64Image = Buffer.from(buffer).toString('base64');
-        console.log(`Processing ${key}: Buffer size=${buffer.byteLength}, MIME=${file.type}`);
+        console.log(
+          `Processing ${key}: Buffer size=${buffer.byteLength}, MIME=${file.type}, Base64 length=${base64Image.length}`
+        );
 
         const prompt = `Analyze this ${key.replace(/([A-Z])/g, ' $1')} image for palmistry features:
         - Describe all visible lines and marks
         - Provide traditional interpretations
         - Note any unclear areas`;
 
-        const result = await model.generateContent([
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType: file.type,
-              data: base64Image,
+        const result = await retryWithBackoff(async () => {
+          console.log(`Sending Gemini API request for ${key}`);
+          const response = await model.generateContent([
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: file.type,
+                data: base64Image,
+              },
             },
-          },
-        ]);
+          ]);
+          const text = (await response.response).text();
+          console.log(`Received Gemini API response for ${key}: ${text.substring(0, 100)}...`);
+          return text;
+        });
 
-        const responseText = (await result.response).text();
-        console.log(`Analysis for ${key}:`, responseText);
-        results[key] = responseText;
+        results[key] = result;
+        successfulAnalyses++;
       } catch (error) {
-        console.error(`Error processing ${key}:`, error.message, error.stack);
-        results[key] = `Analysis failed for ${key.replace(/([A-Z])/g, ' $1')}`;
+        console.error(`Error processing ${key}:`, error.message);
+        results[key] = `Analysis failed for ${key.replace(/([A-Z])/g, ' $1')}: ${error.message}`;
       }
     }
 
@@ -88,17 +117,25 @@ export async function POST(request) {
       3. Relationship Patterns
       4. Health Indicators`;
 
-      const overallResult = await model.generateContent([{ text: overallPrompt }]);
-      const overallText = (await overallResult.response).text();
-      console.log('Overall analysis:', overallText);
-      results.overall = overallText;
+      results.overall = await retryWithBackoff(async () => {
+        console.log('Sending Gemini API request for overall reading');
+        const response = await model.generateContent([{ text: overallPrompt }]);
+        const text = (await response.response).text();
+        console.log(`Received Gemini API response for overall: ${text.substring(0, 100)}...`);
+        return text;
+      });
+
+      successfulAnalyses++;
     } catch (error) {
-      console.error('Error generating overall analysis:', error.message, error.stack);
-      results.overall = 'Could not generate complete reading';
+      console.error('Error generating overall analysis:', error.message);
+      results.overall = `Could not generate complete reading: ${error.message}`;
     }
 
+    // Return partial results if at least one analysis succeeded
+    const hasSuccessfulAnalysis = successfulAnalyses > 0;
+
     return NextResponse.json({
-      success: true,
+      success: hasSuccessfulAnalysis,
       data: {
         overallReading: results.overall,
         leftPalm: results.leftPalm,
@@ -109,7 +146,7 @@ export async function POST(request) {
       },
     });
   } catch (error) {
-    console.error('API Error:', error.message, error.stack);
+    console.error('API Error:', error.message);
     return NextResponse.json(
       {
         success: false,
@@ -117,7 +154,7 @@ export async function POST(request) {
           ? 'API quota exceeded. Please try again later.'
           : error.message || 'Analysis failed',
         suggestion: error.message.includes('quota')
-          ? 'Upgrade your API plan or wait until quota resets'
+          ? 'Generate a new API key at https://console.cloud.google.com/ or wait until quota resets'
           : 'Check your images and try again',
       },
       { status: error.message.includes('quota') ? 429 : 400 }
