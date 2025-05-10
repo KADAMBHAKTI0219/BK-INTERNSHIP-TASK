@@ -54,7 +54,6 @@ export default function PalmDetector() {
   // Convert data URL to blob with proper error handling
   const dataURLtoBlob = (dataURL) => {
     try {
-      console.log('Data URL (first 50 chars):', dataURL.substring(0, 50));
       const arr = dataURL.split(',');
       const mime = arr[0].match(/:(.*?);/)[1];
       const bstr = atob(arr[1]);
@@ -63,7 +62,6 @@ export default function PalmDetector() {
         u8arr[i] = bstr.charCodeAt(i);
       }
       const blob = new Blob([u8arr], { type: 'image/jpeg' });
-      console.log('Blob size:', blob.size, 'Type:', blob.type);
       return blob;
     } catch (error) {
       console.error('Error converting data URL to blob:', error);
@@ -89,7 +87,6 @@ export default function PalmDetector() {
         throw new Error('Empty or invalid screenshot captured');
       }
 
-      // Resize image to ensure manageable size
       const resizedImageSrc = await resizeImage(imageSrc);
       const blob = await dataURLtoBlob(resizedImageSrc);
 
@@ -205,8 +202,7 @@ export default function PalmDetector() {
       if (results.landmarks.length > 0) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
-          const handedness = results.handedness[i][0].displayName; // Raw handedness (Left or Right)
-          // Adjust handedness for gesture labeling and dot colors based on facingMode
+          const handedness = results.handedness[i][0].displayName;
           const displayHandedness =
             facingMode === 'environment' ? handedness : handedness === 'Left' ? 'Right' : 'Left';
 
@@ -224,13 +220,12 @@ export default function PalmDetector() {
             currentGesture = `${displayHandedness} Thumb`;
           }
 
-          // Draw hand landmarks using displayHandedness for dot colors
           const keyPoints = [0, 4, 8, 12, 16, 20];
           for (const index of keyPoints) {
             const landmark = landmarks[index];
             ctx.beginPath();
             ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red'; // Use displayHandedness for dot color
+            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red';
             ctx.fill();
           }
         }
@@ -295,7 +290,6 @@ export default function PalmDetector() {
           throw new Error(`Missing image data for ${image.type}`);
         }
         const key = image.type.replace(' ', '_').toLowerCase();
-        console.log('Appending to FormData:', key, 'Size:', image.blob.size);
         formData.append(key, image.blob, `${key}.jpg`);
       });
 
@@ -546,8 +540,10 @@ export default function PalmDetector() {
                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white p-2">
                       <p className="text-xs truncate">{image.type}</p>
                     </div>
+              
                   </div>
                 ))}
+                 
               </div>
             </div>
           )}
