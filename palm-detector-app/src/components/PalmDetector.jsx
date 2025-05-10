@@ -1,5 +1,4 @@
 'use client';
-
 import React, { useRef, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
@@ -26,6 +25,100 @@ export default function PalmDetector() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPrediction, setShowPrediction] = useState(false);
   const [apiError, setApiError] = useState(null);
+
+  // Resize image to prevent oversized blobs
+  const resizeImage = (dataURL, maxSize = 800) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.src = dataURL;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > height && width > maxSize) {
+          height = (maxSize / width) * height;
+          width = maxSize;
+        } else if (height > maxSize) {
+          width = (maxSize / height) * width;
+          height = maxSize;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
+      };
+      img.onerror = () => reject(new Error('Failed to load image for resizing'));
+    });
+  };
+
+  // Convert data URL to blob with proper error handling
+  const dataURLtoBlob = (dataURL) => {
+    try {
+      console.log('Data URL (first 50 chars):', dataURL.substring(0, 50));
+      const arr = dataURL.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      const u8arr = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) {
+        u8arr[i] = bstr.charCodeAt(i);
+      }
+      const blob = new Blob([u8arr], { type: 'image/jpeg' });
+      console.log('Blob size:', blob.size, 'Type:', blob.type);
+      return blob;
+    } catch (error) {
+      console.error('Error converting data URL to blob:', error);
+      throw new Error('Failed to process image');
+    }
+  };
+
+  // Enhanced image capture with proper blob creation
+  const captureImage = async (gestureType) => {
+    if (!webcamRef.current || webcamRef.current.video.readyState !== 4) {
+      setApiError('Webcam not ready');
+      return;
+    }
+
+    try {
+      const imageSrc = webcamRef.current.getScreenshot({
+        width: 1280,
+        height: 720,
+        screenshotQuality: 1.0,
+      });
+
+      if (!imageSrc || imageSrc.length < 100) {
+        throw new Error('Empty or invalid screenshot captured');
+      }
+
+      // Resize image to ensure manageable size
+      const resizedImageSrc = await resizeImage(imageSrc);
+      const blob = await dataURLtoBlob(resizedImageSrc);
+
+      if (blob.size < 500) {
+        throw new Error('Image data is too small');
+      }
+
+      setCapturedImages((prev) => [
+        ...prev,
+        {
+          type: gestureType,
+          url: resizedImageSrc,
+          blob,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
+
+      setRequiredGestures((prev) =>
+        prev.map((g) => (g.name === gestureType ? { ...g, captured: true } : g))
+      );
+
+      setLastCaptureTime(Date.now());
+      setTimer(5);
+      setApiError(null);
+    } catch (error) {
+      setApiError(error.message);
+      console.error('Capture error:', error);
+    }
+  };
 
   // Detect mobile device
   useEffect(() => {
@@ -66,6 +159,7 @@ export default function PalmDetector() {
         }
       } catch (error) {
         console.error('Error initializing HandLandmarker:', error);
+        setApiError('Failed to initialize hand detection');
       }
     }
 
@@ -111,7 +205,8 @@ export default function PalmDetector() {
       if (results.landmarks.length > 0) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
-          const handedness = results.handedness[i][0].displayName;
+          const handedness = results.handedness[i][0].displayName; // Raw handedness (Left or Right)
+          // Adjust handedness for gesture labeling based on facingMode
           const displayHandedness =
             facingMode === 'environment' ? handedness : handedness === 'Left' ? 'Right' : 'Left';
 
@@ -129,13 +224,13 @@ export default function PalmDetector() {
             currentGesture = `${displayHandedness} Thumb`;
           }
 
-          // Draw hand landmarks
+          // Draw hand landmarks using raw handedness for dot colors
           const keyPoints = [0, 4, 8, 12, 16, 20];
           for (const index of keyPoints) {
             const landmark = landmarks[index];
             ctx.beginPath();
             ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red';
+            ctx.fillStyle = handedness === 'Left' ? 'blue' : 'red'; // Use raw handedness for dot color
             ctx.fill();
           }
         }
@@ -144,103 +239,8 @@ export default function PalmDetector() {
       setDetectedGesture(currentGesture);
     } catch (error) {
       console.error('Detection error:', error);
+      setApiError('Hand detection failed');
     }
-  };
-
-  // Check image clarity (basic blur detection using variance of Laplacian)
-  const checkImageClarity = (imageSrc) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = imageSrc;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-
-        // Convert to grayscale and compute Laplacian variance
-        let sum = 0;
-        let sumSquared = 0;
-        let pixelCount = 0;
-
-        for (let y = 1; y < canvas.height - 1; y++) {
-          for (let x = 1; x < canvas.width - 1; x++) {
-            const i = (y * canvas.width + x) * 4;
-            // Convert to grayscale
-            const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-
-            // Laplacian filter
-            const laplacian =
-              -4 * gray +
-              (data[((y - 1) * canvas.width + x) * 4] * 0.299 +
-                data[((y - 1) * canvas.width + x) * 4 + 1] * 0.587 +
-                data[((y - 1) * canvas.width + x) * 4 + 2] * 0.114) +
-              (data[((y + 1) * canvas.width + x) * 4] * 0.299 +
-                data[((y + 1) * canvas.width + x) * 4 + 1] * 0.587 +
-                data[((y + 1) * canvas.width + x) * 4 + 2] * 0.114) +
-              (data[(y * canvas.width + (x - 1)) * 4] * 0.299 +
-                data[(y * canvas.width + (x - 1)) * 4 + 1] * 0.587 +
-                data[(y * canvas.width + (x - 1)) * 4 + 2] * 0.114) +
-              (data[(y * canvas.width + (x + 1)) * 4] * 0.299 +
-                data[(y * canvas.width + (x + 1)) * 4 + 1] * 0.587 +
-                data[(y * canvas.width + (x + 1)) * 4 + 2] * 0.114);
-
-            sum += laplacian;
-            sumSquared += laplacian * laplacian;
-            pixelCount++;
-          }
-        }
-
-        const mean = sum / pixelCount;
-        const variance = sumSquared / pixelCount - mean * mean;
-        // Threshold for blur detection (adjust based on testing)
-        resolve(variance > 100); // Higher variance indicates sharper image
-      };
-      img.onerror = () => resolve(false);
-    });
-  };
-
-  // Capture image
-  const captureImage = async (gestureType) => {
-    if (!webcamRef.current) {
-      console.error('Webcam not available');
-      setApiError('Webcam not available');
-      return;
-    }
-
-    const imageSrc = webcamRef.current.getScreenshot();
-    if (!imageSrc) {
-      console.error('Failed to capture screenshot');
-      setApiError('Failed to capture screenshot');
-      return;
-    }
-
-    // Check image clarity
-    const isClear = await checkImageClarity(imageSrc);
-    if (!isClear) {
-      setApiError(`Image for ${gestureType} is too blurry. Please try again with better lighting and a steady hand.`);
-      return;
-    }
-
-    setCapturedImages((prev) => [
-      ...prev,
-      {
-        type: gestureType,
-        url: imageSrc,
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
-
-    setRequiredGestures((prev) =>
-      prev.map((g) => (g.name === gestureType ? { ...g, captured: true } : g))
-    );
-
-    setLastCaptureTime(Date.now());
-    setTimer(5);
   };
 
   // Timer effect
@@ -262,26 +262,6 @@ export default function PalmDetector() {
     return () => clearInterval(interval);
   }, [lastCaptureTime, detectedGesture, isCapturing, requiredGestures]);
 
-  // Convert data URL to blob
-  const dataURLtoBlob = (dataURL) => {
-    try {
-      const arr = dataURL.split(',');
-      const mime = arr[0].match(/:(.*?);/)[1];
-      const bstr = atob(arr[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-      }
-
-      return new Blob([u8arr], { type: mime });
-    } catch (error) {
-      console.error('Error converting data URL to blob:', error);
-      throw error;
-    }
-  };
-
   // Reset capture process
   const resetCapture = () => {
     setCapturedImages([]);
@@ -299,7 +279,7 @@ export default function PalmDetector() {
     setApiError(null);
   };
 
-  // Analyze palmistry
+  // Analyze palmistry with proper FormData handling
   const analyzePalmistry = async () => {
     setIsLoading(true);
     setApiError(null);
@@ -309,73 +289,59 @@ export default function PalmDetector() {
         throw new Error('Please capture all four required images');
       }
 
-      console.log('Captured images:', capturedImages.map((img) => img.type));
-
       const formData = new FormData();
-      for (const [index, image] of capturedImages.entries()) {
-        try {
-          const blob = dataURLtoBlob(image.url);
-          console.log(`Image ${image.type} blob size: ${blob.size}`);
-          if (blob.size === 0) {
-            throw new Error(`Invalid image data for ${image.type}`);
-          }
-          formData.append(`image_${index}`, blob, `${image.type.replace(' ', '_')}.jpg`);
-        } catch (error) {
-          throw new Error(`Failed to process ${image.type}: ${error.message}`);
+      capturedImages.forEach((image) => {
+        if (!image.blob) {
+          throw new Error(`Missing image data for ${image.type}`);
         }
-      }
-
-      console.log('Sending request to /api/palmistry');
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const key = image.type.replace(' ', '_').toLowerCase();
+        console.log('Appending to FormData:', key, 'Size:', image.blob.size);
+        formData.append(key, image.blob, `${key}.jpg`);
+      });
 
       const response = await fetch('/api/palmistry', {
         method: 'POST',
         body: formData,
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || `API error: ${response.status}`);
+        throw new Error(errorData.error || 'API request failed');
       }
 
       const result = await response.json();
-      console.log('API response:', result);
-
-      if (
-        !result ||
-        !result.overall ||
-        !result.leftpalm ||
-        !result.rightpalm ||
-        !result.leftthumb ||
-        !result.rightthumb
-      ) {
-        throw new Error('Incomplete data received from API');
+      if (!result.data) {
+        throw new Error('Invalid response format from server');
       }
 
-      setPrediction(result);
+      setPrediction({
+        overall: result.data.overallReading || 'No overall reading available',
+        leftpalm: result.data.leftPalm || 'Left palm analysis not available',
+        rightpalm: result.data.rightPalm || 'Right palm analysis not available',
+        leftthumb: result.data.leftThumb || 'Left thumb analysis not available',
+        rightthumb: result.data.rightThumb || 'Right thumb analysis not available',
+      });
+
       setShowPrediction(true);
     } catch (error) {
-      console.error('Error analyzing palmistry:', error);
-      setApiError(error.message || 'Failed to get prediction. Please try again.');
-
-      if (error.message.includes('timeout') || error.message.includes('network')) {
-        console.log('Retrying in 2 seconds...');
-        setTimeout(() => {
-          analyzePalmistry();
-        }, 2000);
-      }
+      console.error('Analysis error:', error);
+      setApiError(error.message || 'Failed to analyze. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Toggle camera
+  // Toggle camera with delay
   const toggleCamera = () => {
-    setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
+    setFacingMode((prev) => {
+      const newMode = prev === 'user' ? 'environment' : 'user';
+      setTimeout(() => {
+        if (webcamRef.current) {
+          console.log('Camera switched to:', newMode);
+        }
+      }, 500);
+      return newMode;
+    });
   };
 
   // Show prediction handler
@@ -393,7 +359,7 @@ export default function PalmDetector() {
         Palmistry Capture
       </h1>
 
-      <div className="w-full max-w-4xl mx-auto flex flex-col lg:flex-row gap-6">
+      <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-6">
         {/* Camera Section */}
         <div className="flex-1">
           {isCapturing ? (
@@ -402,13 +368,13 @@ export default function PalmDetector() {
                 audio={false}
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
-                screenshotQuality={0.95}
+                screenshotQuality={1.0}
                 className="absolute top-0 left-0 w-full h-full object-cover"
                 videoConstraints={{
                   facingMode,
-                  width: { min: 640, ideal: 1280, max: 1920 },
-                  height: { min: 480, ideal: 720, max: 1080 },
-                  frameRate: { ideal: 30, min: 15 },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 30 },
                 }}
                 mirrored={facingMode === 'user'}
               />
@@ -532,28 +498,28 @@ export default function PalmDetector() {
                   <div className="space-y-4">
                     <div className="p-4 bg-blue-50 rounded-lg">
                       <h3 className="font-medium text-blue-800 mb-2">Overall Reading</h3>
-                      <p className="text-gray-700">{prediction.overall}</p>
+                      <p className="text-gray-700 whitespace-pre-line">{prediction.overall}</p>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="p-4 bg-green-50 rounded-lg">
                         <h3 className="font-medium text-green-800 mb-2">Left Palm</h3>
-                        <p className="text-gray-700">{prediction.leftpalm}</p>
+                        <p className="text-gray-700 whitespace-pre-line">{prediction.leftpalm}</p>
                       </div>
 
                       <div className="p-4 bg-green-50 rounded-lg">
                         <h3 className="font-medium text-green-800 mb-2">Right Palm</h3>
-                        <p className="text-gray-700">{prediction.rightpalm}</p>
+                        <p className="text-gray-700 whitespace-pre-line">{prediction.rightpalm}</p>
                       </div>
 
                       <div className="p-4 bg-purple-50 rounded-lg">
                         <h3 className="font-medium text-purple-800 mb-2">Left Thumb</h3>
-                        <p className="text-gray-700">{prediction.leftthumb}</p>
+                        <p className="text-gray-700 whitespace-pre-line">{prediction.leftthumb}</p>
                       </div>
 
                       <div className="p-4 bg-purple-50 rounded-lg">
                         <h3 className="font-medium text-purple-800 mb-2">Right Thumb</h3>
-                        <p className="text-gray-700">{prediction.rightthumb}</p>
+                        <p className="text-gray-700 whitespace-pre-line">{prediction.rightthumb}</p>
                       </div>
                     </div>
                   </div>
@@ -574,6 +540,7 @@ export default function PalmDetector() {
                         src={image.url}
                         alt={image.type}
                         className="w-full h-full object-cover"
+                        loading="lazy"
                       />
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white p-2">
