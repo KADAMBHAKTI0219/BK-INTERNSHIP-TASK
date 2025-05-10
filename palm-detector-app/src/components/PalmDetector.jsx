@@ -206,7 +206,7 @@ export default function PalmDetector() {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
           const handedness = results.handedness[i][0].displayName; // Raw handedness (Left or Right)
-          // Adjust handedness for gesture labeling based on facingMode
+          // Adjust handedness for gesture labeling and dot colors based on facingMode
           const displayHandedness =
             facingMode === 'environment' ? handedness : handedness === 'Left' ? 'Right' : 'Left';
 
@@ -224,13 +224,13 @@ export default function PalmDetector() {
             currentGesture = `${displayHandedness} Thumb`;
           }
 
-          // Draw hand landmarks using raw handedness for dot colors
+          // Draw hand landmarks using displayHandedness for dot colors
           const keyPoints = [0, 4, 8, 12, 16, 20];
           for (const index of keyPoints) {
             const landmark = landmarks[index];
             ctx.beginPath();
             ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = handedness === 'Left' ? 'blue' : 'red'; // Use raw handedness for dot color
+            ctx.fillStyle = displayHandedness === 'Left' ? 'blue' : 'red'; // Use displayHandedness for dot color
             ctx.fill();
           }
         }
